@@ -13,7 +13,7 @@ const RELEASE_ENVIRONMENT_REGEX = 'release-[0-9]+[\\.]*[0-9]*[\\.]*[0-9]*'
   try {
     const localWorkingDir = process.cwd()
     const scriptDirectory = await getDirNamePath()
-    const contentfulManagement = (await import('contentful-management')).default
+    const contentfulManagement = await import('contentful-management')
     const contentfulLib = await import('contentful-lib-helpers')
 
     const envValues = await getEnvValues(localWorkingDir, scriptDirectory)
@@ -94,9 +94,12 @@ const RELEASE_ENVIRONMENT_REGEX = 'release-[0-9]+[\\.]*[0-9]*[\\.]*[0-9]*'
       console.error(
         '@@/ERROR: No action chosen or returned an error. Inspect the logs and try again'
       )
+      process.exit(1)
     }
+    process.exit(0)
   } catch (error) {
     console.error('@@/ERROR:', error)
+    process.exit(1)
   }
 })()
 
@@ -116,7 +119,7 @@ const RELEASE_ENVIRONMENT_REGEX = 'release-[0-9]+[\\.]*[0-9]*[\\.]*[0-9]*'
  *
  */
 async function getEnvValues(localWorkingDir, scriptDirectory) {
-  const { existsSync } = await import('fs')
+  const { existsSync } = await import('node:fs')
   const { config } = await import('dotenv')
 
   const envDataFromPath = path =>
@@ -140,8 +143,8 @@ async function getEnvValues(localWorkingDir, scriptDirectory) {
  * @return {Promise<string>} The path of the current directory.
  */
 async function getDirNamePath() {
-  const { fileURLToPath } = await import('url')
-  const { dirname } = await import('path')
+  const { fileURLToPath } = await import('node:url')
+  const { dirname } = await import('node:path')
 
   const __filename = fileURLToPath(import.meta.url)
   return dirname(__filename)
@@ -314,8 +317,8 @@ async function getEnvsFromArgs(parsedArgs, chosenAction) {
 /**
  * Retrieves the Contentful Space object
  *
- * @param {import("contentful-management/dist/typings/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
- * @param {import("contentful-lib-helpers").} contentfulLib - The Contentful Libraries.
+ * @param {import("contentful-management/dist/types/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
+ * @param {import("contentful-lib-helpers")} contentfulLib - The Contentful Libraries.
  * @param {Object} parsedArguments - Parsed arguments object.
  * @param {string} parsedArguments.managementToken - The CMS Management Token.
  * @param {string} parsedArguments.spaceId - The CMS Space ID.
@@ -331,7 +334,7 @@ async function getEnvsFromArgs(parsedArgs, chosenAction) {
  * @param {string} parsedArguments.protectedEnvironments - A list of protected environments, usually 'dev,staging,master'.
  * @param {string} parsedArguments.releaseRegularExpression - A regular expression for the release branches, usually 'release-x.y.z'.
  *
- * @returns {Promise<import("contentful-management/dist/typings/entities/space").Space|null>} - A Promise that resolves with the Space object, or `null` if not found.
+ * @returns {Promise<import("contentful-management/dist/types/entities/space").Space|null>} - A Promise that resolves with the Space object, or `null` if not found.
  */
 async function getSpace(contentfulManagement, contentfulLib, parsedArguments) {
   const spaceSingleton = await contentfulLib.getSpace(
@@ -355,8 +358,8 @@ async function getSpace(contentfulManagement, contentfulLib, parsedArguments) {
 }
 
 /**
- * @param {import("contentful-management/dist/typings/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
- * @param {import("contentful-lib-helpers").} contentfulLib - The Contentful Libraries.
+ * @param {import("contentful-management/dist/types/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
+ * @param {import("contentful-lib-helpers")} contentfulLib - The Contentful Libraries.
  * @param {Object} parsedArguments - Parsed arguments object.
  * @param {string} parsedArguments.managementToken - The CMS Management Token.
  * @param {string} parsedArguments.spaceId - The CMS Space ID.
@@ -418,9 +421,9 @@ async function validateEnvironments(
 /**
  * Duplicate an environment into a new one
  *
- * @param {import("contentful-management/dist/typings/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
- * @param {import("contentful-lib-helpers").} contentfulLib - The Contentful Libraries.
- * @param {import("contentful-management/dist/typings/entities/space").Space} spaceSingleton - A Contentful Space object
+ * @param {import("contentful-management/dist/types/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
+ * @param {import("contentful-lib-helpers")} contentfulLib - The Contentful Libraries.
+ * @param {import("contentful-management/dist/types/entities/space").Space} spaceSingleton - A Contentful Space object
  * @param {Object} parsedArguments - Parsed arguments object.
  * @param {string} parsedArguments.managementToken - The CMS Management Token.
  * @param {string} parsedArguments.spaceId - The CMS Space ID.
@@ -477,28 +480,39 @@ async function duplicateEnvironment(
   }
 
   if (duplicatedEnvironment) {
-    // Wait few seconds before checking if environment is available. It might not be
-    let intervalObj = setInterval(async () => {
-      await duplicatedEnvironment
-        .getEntries({ limit: 1 })
-        .then(entries => {
+    // Poll until the new environment is ready to accept requests (or timeout after 60s)
+    await new Promise((resolve, reject) => {
+      let elapsed = 0
+      const maxWaitMs = 60000
+      const intervalObj = setInterval(async () => {
+        elapsed += 1000
+        try {
+          await duplicatedEnvironment.getEntries({ limit: 1 })
           console.log(
             '##/INFO: ' +
               parsedArguments?.environmentTo +
               ' successfully duplicated from: ' +
               parsedArguments?.environmentFrom
           )
-
-          // Success, therefore clear the interval
           clearInterval(intervalObj)
-        })
-        .catch(e => {
-          console.log(
-            '%%/DEBUG: Waiting to retrieve the newly created environment: ' +
-              parsedArguments?.environmentTo
-          )
-        })
-    }, 1000)
+          resolve()
+        } catch (e) {
+          if (elapsed >= maxWaitMs) {
+            clearInterval(intervalObj)
+            reject(
+              new Error(
+                `Timeout: environment '${parsedArguments?.environmentTo}' not ready after 60s`
+              )
+            )
+          } else {
+            console.log(
+              '%%/DEBUG: Waiting to retrieve the newly created environment: ' +
+                parsedArguments?.environmentTo
+            )
+          }
+        }
+      }, 1000)
+    })
   } else {
     console.error(
       `@@/ERROR: There was an error duplicating the environment ${parsedArguments?.environmentTo}`
@@ -512,9 +526,9 @@ async function duplicateEnvironment(
 /**
  * Sync scheduled actions between two environments.
  *
- * @param {import("contentful-management/dist/typings/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
- * @param {import("contentful-lib-helpers").} contentfulLib - The Contentful Libraries.
- * @param {import("contentful-management/dist/typings/entities/space").Space} spaceSingleton - A Contentful Space object.
+ * @param {import("contentful-management/dist/types/contentful-management").ContentfulManagement} contentfulManagement - The Contentful Management client.
+ * @param {import("contentful-lib-helpers")} contentfulLib - The Contentful Libraries.
+ * @param {import("contentful-management/dist/types/entities/space").Space} spaceSingleton - A Contentful Space object.
  * @param {Object} parsedArguments - Parsed arguments object.
  * @param {string} parsedArguments.managementToken - The CMS Management Token.
  * @param {string} parsedArguments.spaceId - The CMS Space ID.
@@ -621,7 +635,7 @@ async function syncScheduledActions(
         )
       } catch (e) {
         console.error(
-          '@@ERROR: Destination environment does not exist or has exceeded max scheduled actions.'
+          '@@/ERROR: Destination environment does not exist or has exceeded max scheduled actions.'
         )
       }
     } else {

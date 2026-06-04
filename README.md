@@ -52,10 +52,10 @@ bun add contentful-cli-release
 
 ### Requirements
 
-* `node` >= 18.20.0
+* `node` >= 22
 * `npm` >= 10.5.0
-* `contentful-management` >= 11.31.7
-* [contentful-lib-helpers](https://www.npmjs.com/package/contentful-lib-helpers) >= 0.4.0
+* `contentful-management` >= 12.x.x
+* [contentful-lib-helpers](https://www.npmjs.com/package/contentful-lib-helpers) >= 1.0.0
 
 
 ### Set-up
@@ -616,7 +616,7 @@ Environment.
 
 ```yaml
 .node:
-  image: node:18.15.0-bullseye #This is a Docker Image from Docker Hub
+  image: node:22-bullseye #This is a Docker Image from Docker Hub
 
 contentful-pre-release:
   extends:
@@ -682,7 +682,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.15.0]
+        node-version: [22]
 
     steps:
       - uses: actions/checkout@v3
